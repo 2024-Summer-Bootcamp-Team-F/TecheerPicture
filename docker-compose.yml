@@ -1,0 +1,132 @@
+#docker.compose.yml
+version: "3.9"  # 최신 버전 사용
+
+services:
+  mysqldb:
+    build: ./db
+    container_name: mysqldb
+    env_file:
+      - "./db/.env"
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks:
+      - app-network
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./:/app
+      - ./logs:/app/logs
+    restart: always
+    depends_on:
+      - mysqldb
+      - rabbitmq
+      - redis
+    networks:
+      - app-network
+    command: >
+      bash -c "python wait_mysql.py &&
+      python manage.py makemigrations &&
+      python manage.py migrate &&
+      gunicorn -w 4 -b 0.0.0.0:8000 backend.wsgi:application"
+
+  nginx:
+        build: ./nginx
+        container_name: nginx
+        ports:
+          - 80:80
+          - 443:443
+        restart: always
+        volumes:
+          - build_folder:/var/www/frontend
+          - ./certbot/conf:/etc/letsencrypt 
+          - ./certbot/www:/var/www/certbot
+        depends_on:
+          - backend
+          - frontend
+        command: "/bin/sh -c 'while :; do sleep 6h & wait $${!}; nginx -s reload; done & nginx -g \"daemon off;\"'"
+    
+  certbot:  #certbot 컨테이너 추가 
+    image: certbot/certbot
+    restart: unless-stopped
+    container_name: certbot
+    volumes: 
+      - ./certbot/conf:/etc/letsencrypt  
+      - ./certbot/www:/var/www/certbot
+    depends_on:
+      - nginx
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: frontend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend/:/frontend
+      - build_folder:/frontend/dist
+      - /frontend/node_modules
+
+  rabbitmq:
+  image: "rabbitmq:3-management"
+  container_name: rabbitmq
+  ports:
+    - "5672:5672"
+    - "15672:15672"
+    - "15692:15692"
+  volumes:
+    - rabbitmq_data:/var/lib/rabbitmq
+  environment:
+    RABBITMQ_DEFAULT_USER: "guest"
+    RABBITMQ_DEFAULT_PASS: "guest"
+  networks:
+    - app-network
+  command: >
+    bash -c "rabbitmq-plugins enable rabbitmq_prometheus &&
+    rabbitmq-server"
+
+  redis:
+    image: redis
+    container_name: redis
+    ports:
+      - "6379:6379"
+    networks:
+      - app-network
+
+  celery:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: celery
+    volumes:
+      - ./:/app
+      - ./logs:/app/logs
+    restart: always
+    depends_on:
+      - backend
+      - rabbitmq
+      - redis
+    networks:
+      - app-network
+    command: celery -A backend worker --loglevel=info --uid=nobody
+
+
+volumes:
+  mysql_data:
+  rabbitmq_data:
+  grafana_data:
+  elasticsearch_data:
+  build_folder: null
+
+networks:
+  app-network:
+    driver: bridge

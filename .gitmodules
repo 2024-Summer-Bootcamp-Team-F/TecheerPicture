@@ -1,0 +1,6 @@
+[submodule "frontend"]
+	path = frontend
+	url = https://github.com/2024-Summer-Bootcamp-Team-F/frontend.git
+[submodule "backend-django"]
+	path = backend-django
+	url = https://github.com/2024-Summer-Bootcamp-Team-F/backend-django.git
